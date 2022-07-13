@@ -1,3 +1,6 @@
 .vs/
 out/
 CMakeSettings.json
+/cmake-build-debug/
+/doc/
+/.idea/.name

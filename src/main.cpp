@@ -1,15 +1,55 @@
-// 注意: 本项目的所有源文件都必须是 UTF-8 编码
-
-// 这是一个“反撤回”机器人
-// 在群里回复 “/anti-recall enabled.” 或者 “撤回没用” 之后
-// 如果有人在群里撤回，那么机器人会把撤回的内容再发出来
-
 #include <iostream>
-#include <map>
+#include <vector>
 #include <mirai.h>
-#include "myheader.h"
+#include "nlohmann/json.hpp"
 using namespace std;
 using namespace Cyan;
+
+//函数声明
+inline string transform(json);
+
+//函数定义
+inline string transform(json message)
+{
+    string output;
+    for(auto & i : message)
+    {
+        string type = i["type"];
+        if(type == "Image")
+        {
+            output += "[图片]";
+        }else if(type == "Plain")
+        {
+            output += i["text"];
+        }else if(type == "At")
+        {
+            output += "@";
+            int targetQQ = i["target"];
+            output += to_string(targetQQ);
+        }
+    }
+    return output;
+}
+
+//重载一个忽略图片的transform函数
+inline string transform(json message, bool textOnly)
+{
+    string output;
+    for(auto & i : message)
+    {
+        string type = i["type"];
+        if(type == "Plain")
+        {
+            output += i["text"];
+        }else if(type == "At")
+        {
+            output += "@";
+            int targetQQ = i["target"];
+            output += to_string(targetQQ);
+        }
+    }
+    return output;
+}
 
 int main()
 {
@@ -18,14 +58,9 @@ int main()
 	system("chcp 65001");
 #endif
 
+    //初始化bot
 	MiraiBot bot;
-	SessionOptions opts;
-	opts.BotQQ = 123456789_qq;				// 请修改为你的机器人QQ
-	opts.HttpHostname = "localhost";		// 请修改为和 mirai-api-http 配置文件一致
-	opts.WebSocketHostname = "localhost";	// 同上
-	opts.HttpPort = 8080;					// 同上
-	opts.WebSocketPort = 8080;				// 同上
-	opts.VerifyKey = "VerifyKey";			// 同上
+	SessionOptions opts = SessionOptions::FromJsonFile("./config.json");
 
 	while (true)
 	{
@@ -35,79 +70,46 @@ int main()
 			bot.Connect(opts);
 			break;
 		}
-		catch (const std::exception& ex)
+		catch (const std::exception& error)
 		{
-			cout << ex.what() << endl;
+			cout << error.what() << endl;
 		}
 		MiraiBot::SleepSeconds(1);
 	}
-	cout << "Bot Working..." << endl;
+	cout << "成功连接到Mirai" << endl;
+    cout << "插件正常运行中，请先输入\"exit\"再退出" << endl;
 
-	// 用map记录哪些群启用了“反撤回”功能
-	map<GID_t, bool> groups;
+    //捕获群消息，记录日志
+    bot.On<GroupMessage>([&](const GroupMessage& event)
+    {
+        cout << "[收到消息] <- [" + event.Sender.Group.Name + "] " << event.Sender.MemberName << "(" << event.Sender.QQ << "): " + transform(event.MessageChain.ToJson()) << endl;
+    });
 
-	bot.On<GroupMessage>(
-		[&](GroupMessage m)
-		{
-			try
-			{
-				string plain = m.MessageChain.GetPlainText();
-				if (plain == "/anti-recall enabled." || plain == "撤回没用")
-				{
-					groups[m.Sender.Group.GID] = true;
-					m.Reply(MessageChain().Plain("撤回也没用，我都看到了"));
-					return;
-				}
-				if (plain == "/anti-recall disabled." || plain == "撤回有用")
-				{
-					groups[m.Sender.Group.GID] = false;
-					m.Reply(MessageChain().Plain("撤回有用"));
-					return;
-				}
-			}
-			catch (const std::exception& ex)
-			{
-				cout << ex.what() << endl;
-			}
-		});
-
-
-	bot.On<GroupRecallEvent>(
-		[&](GroupRecallEvent e)
-		{
-			try
-			{
-				if (!groups[e.Group.GID]) return;
-				auto recalled_mc = bot.GetGroupMessageFromId(e.MessageId).MessageChain;
-				auto mc = "刚刚有人撤回了: " + recalled_mc;
-				bot.SendMessage(e.Group.GID, mc);
-			}
-			catch (const std::exception& ex)
-			{
-				cout << ex.what() << endl;
-			}
-		});
+    bot.On<GroupMessage>([&](const GroupMessage& event)
+    {
+        string message = transform(event.MessageChain.ToJson(), true);
+    });
 
 	// 在失去与mah的连接后重连
-	bot.On<LostConnection>([&](LostConnection e)
-		{
-			cout << e.ErrorMessage << " (" << e.Code << ")" << endl;
-			while (true)
-			{
-				try
-				{
-					cout << "尝试连接 mirai-api-http..." << endl;
-					bot.Reconnect();
-					cout << "与 mirai-api-http 重新建立连接!" << endl;
-					break;
-				}
-				catch (const std::exception& ex)
-				{
-					cout << ex.what() << endl;
-				}
-				MiraiBot::SleepSeconds(1);
-			}
-		});
+	bot.On<LostConnection>([&](const LostConnection& event)
+    {
+        cout << event.ErrorMessage << " (" << event.Code << ")" << endl;
+        while (true)
+        {
+            try
+            {
+                cout << "尝试连接 mirai-api-http..." << endl;
+                bot.Reconnect();
+                cout << "与 mirai-api-http 重新建立连接!" << endl;
+                break;
+            }
+            catch (const std::exception& error)
+            {
+                cout << error.what() << endl;
+            }
+            MiraiBot::SleepSeconds(1);
+        }
+    });
 
 	string cmd;
 	while (cin >> cmd)
